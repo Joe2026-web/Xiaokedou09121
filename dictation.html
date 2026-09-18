@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>英语单词听写（升级版）</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Microsoft YaHei", sans-serif;
+         max-width: 640px; margin: 0 auto; padding: 20px;
+         background: #f5f7fa; color: #333; }
+  .card { background: #fff; border-radius: 16px; padding: 24px;
+          box-shadow: 0 4px 16px rgba(0,0,0,.08); }
+  h2 { margin: 0 0 16px; text-align: center; }
+  #word { font-size: 44px; font-weight: bold; color: #2c3e50;
+          min-height: 56px; text-align: center; letter-spacing: 2px; }
+  .hidden { visibility: hidden; }
+  #zh { text-align: center; font-size: 20px; color: #e67e22;
+        min-height: 28px; margin: 8px 0 16px; }
+  button { font-size: 16px; padding: 10px 18px; margin: 4px;
+           cursor: pointer; border: none; border-radius: 10px;
+           background: #3498db; color: #fff; transition: .2s; }
+  button:hover { background: #2980b9; }
+  button.ghost { background: #ecf0f1; color: #333; }
+  button.ghost:hover { background: #d5dbdb; }
+  .row { display: flex; flex-wrap: wrap; justify-content: center; }
+  input { font-size: 22px; padding: 12px; width: 100%;
+          border: 2px solid #dfe6e9; border-radius: 10px;
+          text-align: center; outline: none; }
+  input:focus { border-color: #3498db; }
+  #result { text-align: center; font-size: 18px; min-height: 26px;
+            margin: 12px 0; font-weight: bold; }
+  .ok { color: #27ae60; } .no { color: #e74c3c; }
+  .stats { text-align: center; color: #7f8c8d; font-size: 14px;
+           margin-top: 12px; }
+  .done { text-align: center; }
+  .done h3 { color: #27ae60; font-size: 26px; }
+  #wrongList { text-align: left; background: #fff5f5; border-radius: 12px;
+               padding: 16px; margin-top: 16px; }
+  #wrongList li { margin: 6px 0; font-size: 18px; }
+  #wrongList .w { font-weight: bold; color: #c0392b; }
+  #wrongList .m { color: #7f8c8d; font-size: 15px; }
+  .hide { display: none; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h2>🎧 英语单词听写</h2>
+
+  <!-- 答题区 -->
+  <div id="quiz">
+    <div id="word" class="hidden"></div>
+    <div id="zh"></div>
+
+    <div class="row">
+      <button onclick="speak()">🔊 播放读音</button>
+      <button class="ghost" onclick="toggle()">👁 显示单词</button>
+      <button class="ghost" onclick="skip()">⏭ 跳过</button>
+    </div>
+
+    <p style="margin:16px 0 8px">你的拼写：</p >
+    <input id="input" autocomplete="off" autocorrect="off"
+           autocapitalize="off" spellcheck="false"
+           onkeydown="if(event.key==='Enter')check()">
+    <div class="row" style="margin-top:12px">
+      <button onclick="check()" style="flex:1">检查</button>
+    </div>
+
+    <div id="result"></div>
+    <div class="stats" id="stats"></div>
+  </div>
+
+  <!-- 完成区 -->
+  <div id="finish" class="done hide">
+    <h3>🎉 本轮完成！</h3>
+    <p id="summary"></p >
+    <div id="wrongList"></div>
+    <div class="row" style="margin-top:20px">
+      <button onclick="retryWrong()" id="retryBtn">🔁 重练错词</button>
+      <button class="ghost" onclick="restart()">🔄 重新开始</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   ① 在这里填你的单词表
+   格式： { en: "英文", zh: "中文释义" }
+   ============================================================ */
+const WORD_LIST = [
+  { en: "weather report",       zh: "天气预报" },
+  { en: "weather station",      zh: "气象站" },
+  { en: "thermometer",    zh: "温度计" },
+  { en: "rain gauge",    zh: "测雨器" },
+  { en: "weather vane",   zh: "风向标" },
+  { en: "measure",   zh: "测量" },
+  { en: "south",    zh: "南" },
+  { en: "north", zh: "北" },
+  { en: "east", zh: "东" },
+  { en: "west",   zh: "西" },
+];
+
+/* ============================================================
+   ② 可选设置
+   ============================================================ */
+const SETTINGS = {
+  shuffle: true,        // 是否随机顺序
+  rate: 0.9,            // 语速 0.5 ~ 1.5
+  accent: "en-US",      // en-US 美音 / en-GB 英音
+  autoPlay: true,       // 每题是否自动播放读音
+  showZh: true,         // 是否显示中文释义
+};
+
+/* ================= 逻辑区（一般不用改） ================= */
+let queue = [];      // 当前题目队列
+let idx = 0;
+let wrong = [];      // 本轮错词
+let rightCount = 0;  // 答对数
+
+const $ = id => document.getElementById(id);
+
+function shuffleArr(a) {
+  a = a.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function start(list) {
+  queue = SETTINGS.shuffle ? shuffleArr(list) : list.slice();
+  idx = 0; wrong = []; rightCount = 0;
+  $("quiz").classList.remove("hide");
+  $("finish").classList.add("hide");
+  render();
+}
+
+function render() {
+  const cur = queue[idx];
+  const w = $("word");
+  w.textContent = cur.en;
+  w.classList.add("hidden");
+  $("zh").textContent = SETTINGS.showZh ? cur.zh : "";
+  $("input").value = "";
+  $("result").textContent = "";
+  $("result").className = "";
+  updateStats();
+  $("input").focus();
+  if (SETTINGS.autoPlay) setTimeout(speak, 250);
+}
+
+function updateStats() {
+  $("stats").textContent =
+    `第 ${idx + 1} / ${queue.length} 题　·　已答对 ${rightCount} 题`;
+}
+
+function speak() {
+  const cur = queue[idx];
+  if (!cur) return;
+  const u = new SpeechSynthesisUtterance(cur.en);
+  u.lang = SETTINGS.accent;
+  u.rate = SETTINGS.rate;
+  speechSynthesis.cancel();
+  speechSynthesis.speak(u);
+}
+
+function toggle() {
+  $("word").classList.toggle("hidden");
+}
+
+function check() {
+  const cur = queue[idx];
+  const user = $("input").value.trim().toLowerCase();
+  if (!user) return;
+  const r = $("result");
+  if (user === cur.en.toLowerCase()) {
+    r.textContent = "✅ 正确！";
+    r.className = "ok";
+    rightCount++;
+    updateStats();
+    setTimeout(next, 700);
+  } else {
+    r.textContent = "❌ 错了，正确答案：" + cur.en;
+    r.className = "no";
+    if (!wrong.find(x => x.en === cur.en)) wrong.push(cur);
+    $("word").classList.remove("hidden"); // 显示正确拼写
+    setTimeout(next, 1500);
+  }
+}
+
+function skip() {
+  const cur = queue[idx];
+  if (!wrong.find(x => x.en === cur.en)) wrong.push(cur);
+  next();
+}
+
+function next() {
+  if (idx < queue.length - 1) {
+    idx++;
+    render();
+  } else {
+    finish();
+  }
+}
+
+function finish() {
+  $("quiz").classList.add("hide");
+  $("finish").classList.remove("hide");
+  const total = queue.length;
+  $("summary").textContent =
+    `共 ${total} 题，答对 ${rightCount} 题，正确率 ${Math.round(rightCount / total * 100)}%`;
+
+  const box = $("wrongList");
+  if (wrong.length === 0) {
+    box.innerHTML = "<p style='text-align:center;color:#27ae60'>太棒了，全对！没有错词 🎯</p >";
+    $("retryBtn").classList.add("hide");
+  } else {
+    $("retryBtn").classList.remove("hide");
+    box.innerHTML = "<b>本轮错词：</b><ul>" +
+      wrong.map(x => `<li><span class="w">${x.en}</span> — <span class="m">${x.zh}</span></li>`).join("") +
+      "</ul>";
+  }
+}
+
+function retryWrong() {
+  if (wrong.length === 0) return;
+  start(wrong);
+}
+
+function restart() {
+  start(WORD_LIST);
+}
+
+/* 启动 */
+start(WORD_LIST);
+</script>
+</body>
+</html>
